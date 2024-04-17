@@ -20,7 +20,7 @@ The model was developed using Python and the libraries:
 -	Numpy
 -	Pandas
 
-The model present the Battery class and the following functions:
+The model presents the Battery class and the following functions:
 
 - battery.maximize_profit_M1M2 (maximize profit using Market 1 and Market 2)
 - energy_market (simulates the energy market)
