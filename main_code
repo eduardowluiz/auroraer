@@ -1,0 +1,25 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from gekko import GEKKO
+
+# Load the Excel file
+excel_file = 'Second Round Technical Question - Attachment 2.xlsx'
+
+# Read data from Sheet1
+sheet1_data = pd.read_excel(excel_file, sheet_name='Half-hourly data')
+
+# Read data from Sheet2
+sheet2_data = pd.read_excel(excel_file, sheet_name='Daily data')
+
+# Extract 'Market 1' and 'Market 2' columns from Sheet1
+market1_sheet1 = sheet1_data['Market 1 Price [£/MWh]'].values
+market2_sheet1 = sheet1_data['Market 2 Price [£/MWh]'].values
+
+# Extract 'Market 3' column from Sheet2
+market3_sheet2 = sheet2_data['Market 3 Price [£/MWh]'].values
+
+# Convert to numpy arrays
+Prices_Market1 = np.array(market1_sheet1)
+Prices_Market2 = np.array(market2_sheet1)
+Prices_Market3 = np.array(market3_sheet2)
