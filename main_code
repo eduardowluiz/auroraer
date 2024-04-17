@@ -6,20 +6,119 @@ from gekko import GEKKO
 # Load the Excel file
 excel_file = 'Second Round Technical Question - Attachment 2.xlsx'
 
-# Read data from Sheet1
+# Read data
 sheet1_data = pd.read_excel(excel_file, sheet_name='Half-hourly data')
-
-# Read data from Sheet2
 sheet2_data = pd.read_excel(excel_file, sheet_name='Daily data')
 
-# Extract 'Market 1' and 'Market 2' columns from Sheet1
+# Extract market prices
 market1_sheet1 = sheet1_data['Market 1 Price [£/MWh]'].values
 market2_sheet1 = sheet1_data['Market 2 Price [£/MWh]'].values
-
-# Extract 'Market 3' column from Sheet2
 market3_sheet2 = sheet2_data['Market 3 Price [£/MWh]'].values
 
 # Convert to numpy arrays
 Prices_Market1 = np.array(market1_sheet1)
 Prices_Market2 = np.array(market2_sheet1)
 Prices_Market3 = np.array(market3_sheet2)
+
+class Battery:
+
+    def __init__(self, max_storage=4, max_rate=2):
+        self.max_storage = max_storage
+        self.current_storage = 4
+        self.max_rate = max_rate
+        self.current_profit = 0
+        self.value_negotiated = 0
+
+    def maximize_profit_M1M2(self, pricesM1, pricesM2):
+        n_periods = len(pricesM1)  # Number of time periods (30-minute intervals)
+        
+        # Initialize GEKKO model inside the function
+        m = GEKKO(remote=False)
+    
+        buy_amount = [m.Var(lb=0, ub=self.max_rate) for _ in range(n_periods)]
+        sell_amount = [m.Var(lb=0, ub=self.max_rate) for _ in range(n_periods)]
+        battery_charge = [m.Var(lb=0, ub=self.max_storage, value=0) for _ in range(n_periods + 1)]
+        # Set the initial value for battery_charge at the first time step
+        buy_decisionM1 = [m.Var(lb=0, ub=1, integer=True) for _ in range(n_periods)]
+        sell_decisionM1 = [m.Var(lb=0, ub=1, integer=True) for _ in range(n_periods)]
+        buy_decisionM2 = [m.Var(lb=0, ub=1, integer=True) for _ in range(n_periods)]
+        sell_decisionM2 = [m.Var(lb=0, ub=1, integer=True) for _ in range(n_periods)]
+    
+        # Constraints
+        for t in range(n_periods):
+            # Objective function: Maximize total profit
+            m.Maximize(0.5 * pricesM1[t] * (sell_amount[t] - buy_amount[t]) + 0.5 * pricesM2[t] * (sell_amount[t] - buy_amount[t]))
+    
+            # Buy or sell decision
+            m.Equation(buy_amount[t] <= self.max_rate * (buy_decisionM2[t] + buy_decisionM1[t]))
+            m.Equation(sell_amount[t] <= self.max_rate * (sell_decisionM2[t] + sell_decisionM1[t]))
+            m.Equation(buy_decisionM1[t] + buy_decisionM2[t] + sell_decisionM1[t] + sell_decisionM2[t] <= 1)  # Only one decision is allowed
+    
+            # Accumulated energy constraint
+            m.Equation(battery_charge[t + 1] == battery_charge[t] + buy_amount[t] * 0.5 - sell_amount[t] * 0.5)
+            m.Equation(battery_charge[t + 1] <= self.max_storage)
+            m.Equation(battery_charge[t + 1] >= 0)
+            m.Equation(battery_charge[0] == self.current_storage)
+            #m.Equation(battery_charge[n_periods-1] > 3)
+    
+        # Solve the optimization problem
+        m.options.SOLVER=1
+        m.solve(disp=False)
+    
+        profitM1 = []
+        profitM2 = []
+        profitM1M2 = []
+        sdm1 = np.array(sell_decisionM1)
+        sdm2 = np.array(sell_decisionM2)
+        bdm1 = np.array(buy_decisionM1)
+        bdm2 = np.array(buy_decisionM2)
+    
+        for t in range(len(pricesM1)):
+            profitM1.append(pricesM1[t] * (sdm1[t] * sell_amount[t].value[0] * 0.5 * 0.95 - bdm1[t] * buy_amount[t].value[0] * 0.5 / 0.95))
+            profitM2.append(pricesM2[t] * (sdm2[t] * sell_amount[t].value[0] * 0.5 * 0.95 - bdm2[t] * buy_amount[t].value[0] * 0.5 / 0.95))
+            profitM1M2.append(profitM1[t] + profitM2[t])
+    
+        total_profit = np.sum(profitM1M2)
+    
+        self.current_storage = battery_charge[-1].value[0]
+        hourly_charge = np.round(np.array(buy_amount) - np.array(sell_amount))
+    
+        # Clear the Gekko model
+        del m
+    
+        return total_profit, hourly_charge, profitM1M2
+
+def energy_market(battery,storage,profit,negotiations):
+    total_hourly_charge = []
+    total_hourly_profit = []
+    for i in range(0,len(Price1),48):
+    #for i in range(0,48*30,48):
+        
+        pricesM1 = Prices_Market1[i:i+48]
+        pricesM2 = Prices_Market2[i:i+48]
+        priceM3 = Prices_Market3[int(i/48)]
+
+        profit_M3 = priceM3*battery.current_storage*0.95
+        profit_M1M2, hourly_charge, hourly_profit = battery.maximize_profit_M1M2(pricesM1,pricesM2)
+
+        print(i/48,profit_M1M2,profit_M3)
+
+        if profit_M3 > profit_M1M2:
+            hourly_fraction = 2*battery.current_storage/48
+            hourly_profit = np.zeros([48])
+            hourly_profit += hourly_fraction*0.5*priceM3
+            hourly_charge = np.zeros([48])
+            hourly_charge -= hourly_fraction
+            battery.current_storage = 0
+
+            for t in range(len(hourly_charge)):
+                total_hourly_charge.append(hourly_charge[t])
+                total_hourly_profit.append(hourly_profit[t])
+        else:
+            for t in range(len(hourly_charge)):
+                total_hourly_charge.append(hourly_charge[t])
+                total_hourly_profit.append(hourly_profit[t])
+
+
+    return total_hourly_profit, total_hourly_charge
+
